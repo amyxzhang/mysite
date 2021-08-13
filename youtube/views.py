@@ -25,13 +25,12 @@ import urllib.request, json
 import re
 import copy
 
-from .models import Channel, RuleCollection, Rule, Video, Comment
+from .models import Channel, RuleCollection, RuleColTemplate, Rule, Video, Comment
 from .utils import *
-from .views_api import getChannel as getChannelFromRequest
+from .util_rules import getChannel as getChannelFromRequest
 
 class YouTubeForm(forms.Form):
   pass
-
 
 class HomePageView(FormView):
   template_name = 'youtube/home.html'
@@ -58,6 +57,13 @@ def getChannel(credentials):
     pub_date=myChannel['snippet']['publishedAt'],
     channel_id=myChannel['id'])
   return djangoChannel
+
+def about_us(request):
+  return render(request, 'youtube/about_us.html')
+
+def mytest(request):
+  return render(request, 'youtube/mytest.html', {})
+
 
 def test_api_request(request):
   if 'credentials' not in request.session:
@@ -286,7 +292,7 @@ def saveCommentObject(youtube, item, video):
   }
   comment, created = Comment.objects.update_or_create(video=video, comment_id=comment_id, defaults=updated_values)
   if (item['snippet']['totalReplyCount'] > 0):
-    replies = get_replies(youtube, comment)  
+    replies = get_replies(youtube, comment)
   return comment
 
 def get_comments_from_video(youtube, video_id):
@@ -324,7 +330,7 @@ def get_replies(youtube, parent):
       'pub_date': pub_date,
       'author': author,
       'likeCount': likeCount
-    }    
+    }
     reply, created = Comment.objects.update_or_create(video=parent.video, comment_id=reply_id, parent_id=parent.comment_id, defaults=updated_values)
     replies.append(reply)
   return replies
@@ -337,8 +343,70 @@ def credentials_to_dict(credentials):
       'client_secret': credentials.client_secret,
       'scopes': credentials.scopes}
 
-def create_word_filter(request):
+def home(request):
   return render(request, "youtube/create_word_filter.html")
+
+def overview(request):
+  myChannel = getChannelFromRequest(request)
+  collections = RuleCollection.objects.filter(owner = myChannel)
+  return render(request,
+    "youtube/page_overview.html",
+    {
+      'collections': collections,
+      'current': {
+        'page': 'overview',
+        'collection': None
+      }
+    })
+
+def edit_word_filter(request, filter_id):
+  myChannel = getChannelFromRequest(request)
+  collections = RuleCollection.objects.filter(owner = myChannel)
+  current_collection = RuleCollection.objects.get(
+    owner = myChannel, id = filter_id)
+  if current_collection is None:
+    raise Exception('Trying to load nonexistant or foreign collection.')
+  return render(request,
+    "youtube/page_collection_edit.html",
+    {
+      'collections': collections,
+      'current': {
+        'page': 'edit',
+        'collection': current_collection
+      }
+    })
+
+def overview_word_filter(request, filter_id):
+  myChannel = getChannelFromRequest(request)
+  collections = RuleCollection.objects.filter(owner = myChannel)
+  current_collection = RuleCollection.objects.get(
+    owner = myChannel, id = filter_id)
+  if current_collection is None:
+    raise Exception('Trying to load nonexistant or foreign collection.')
+  return render(request,
+    "youtube/page_collection_overview.html",
+    {
+      'collections': collections,
+      'current': {
+        'page': 'edit',
+        'collection': current_collection
+      }
+    })
+
+def create_word_filter(request):
+  myChannel = getChannelFromRequest(request)
+  collections = RuleCollection.objects.filter(owner = myChannel)
+  ruleTemplates =  RuleColTemplate.objects.all()
+  return render(request,
+    "youtube/page_collection_add.html",
+    {
+      'collections': collections,
+      'current': {
+        'page': 'add',
+        'collection': None
+      },
+      'rule_templates': ruleTemplates,
+    })
 
 def get_matching_comments(request, phrase):
   if 'credentials' not in request.session:
@@ -412,9 +480,9 @@ def sync(request):
   with urllib.request.urlopen(videoFetchUrl) as url:
     data = json.loads(url.read().decode())
     for item in data['items']:
-      if 'videoId' in item['id'].keys():      
+      if 'videoId' in item['id'].keys():
         publishedAt = item['snippet']['publishedAt']
-        title = item['snippet']['title']        
+        title = item['snippet']['title']
         videoId = item['id']['videoId']
         myVideoIds.append(videoId)
         pub_date = dateutil.parser.parse(publishedAt)
@@ -425,7 +493,7 @@ def sync(request):
   for video_id in myVideoIds:
     get_comments_from_video(youtube, video_id)
 
-  return HttpResponse('Done.'.encode('utf-8'))  
+  return HttpResponse('Done.'.encode('utf-8'))
 
 if __name__ == '__main__':
   # When running locally, disable OAuthlib's HTTPs verification.

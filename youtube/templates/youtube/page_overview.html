@@ -1,0 +1,36 @@
+{% extends "youtube/page_base.html" %}
+
+{% load static %}
+
+{% block scripts %}
+<script type="text/javascript" src="{% static 'youtube/app.overview.js' %}"></script>
+{% endblock scripts %}
+
+{% block content %}
+  <h3>Overview</h3>
+  <div class="py-2 section">
+    <div id="chart-overview-container" class="chart-container" style="height: 300px;"></div>
+  </div>
+
+<hr class="solid">  
+
+<div class="section">
+
+  <h4>All Comments Posted on Your Channel</h4>
+  <div class="row">
+    <div class="col-sm-12">
+      <table id="recent_comments_table" class="table table-striped table-bordered" style="width:100%">
+        <thead>
+          <tr>
+            <th>Comment</th>
+            <th>Commenter</th>
+            <th>Date/Time</th>
+            <th>Video</th>
+            <th>Caught By</th>
+          </tr>
+        </thead>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock content %}

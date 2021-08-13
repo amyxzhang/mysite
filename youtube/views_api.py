@@ -4,9 +4,9 @@ from django.views.generic import TemplateView
 from django.http import HttpResponse, HttpResponseRedirect
 from django.views.decorators.csrf import csrf_exempt
 
-from .util_rules import getMatchedComments, getMatchedCommentsAndPrettify, serializeComment, serializeCommentWithPhrase, getColors, ruleDateCounter
-from .util_filters import serializeRules, serializeCollection
-from .models import Channel, RuleCollection, Rule, Video, Comment
+from .util_rules import getMatchedComments, getMatchedCommentsForCharts, getMatchedCommentsAndPrettify, serializeComment, serializeCommentWithPhrase, getColors, ruleDateCounter, getChannel, get_matched_comment_ids
+from .util_filters import serializeRule, serializeRules, serializeCollection
+from .models import Channel, RuleCollection, Rule, Video, Comment, RuleColTemplate
 
 from datetime import datetime
 import urllib.request, json
@@ -14,7 +14,7 @@ import random
 import re
 
 from rest_framework import viewsets
-from .serializers import RuleCollectionSerializer, CommentSerializer
+from .serializers import RuleCollectionSerializer, CommentSerializer, AllCommentsSerializer
 
 def indexRuleCollection(request):
     return render(request, 'youtube/ruleCollections.html')
@@ -27,38 +27,10 @@ class RuleCollectionViewSet(viewsets.ModelViewSet):
       queryset = self.queryset
       myChannel = getChannel(self.request)
       query_set = queryset.filter(owner = myChannel)
-      return query_set    
+      return query_set
 
 def indexCommentCollection(request, filter_id):
-    return render(request, 'youtube/commentsTable.html', {'filter_id': filter_id})      
-
-def variantReg(phrase):
-  myList = []
-  for k in phrase:
-    myList.append(k)
-    myList.append('+')
-  myString = ""
-  for elem in myList:
-    myString += elem
-  return myString
-
-
-def get_matched_comment_ids(myChannelComments, rules):    
-  matched_comment_ids = []
-  for comment in myChannelComments:
-    lookups = []
-    for rule in rules:
-      rule_phrase = rule.phrase
-      if (rule.spell_variants):
-        rule_phrase = variantReg(rule_phrase)
-      if (rule.case_sensitive):
-        lookup = re.search(r'\b({})\b'.format(rule_phrase), comment.text)
-      else:
-        lookup = re.search(r'\b({})\b'.format(rule_phrase), comment.text, re.IGNORECASE)
-      lookups.append(lookup)
-    if any(lookups):
-      matched_comment_ids.append(comment.id)  
-  return matched_comment_ids
+    return render(request, 'youtube/commentsTable.html', {'filter_id': filter_id})
 
 class CommentViewSet(viewsets.ModelViewSet):
     queryset = Comment.objects.all().order_by('pub_date')
@@ -73,23 +45,18 @@ class CommentViewSet(viewsets.ModelViewSet):
       rules = Rule.objects.filter(rule_collection__id = rule_collection_id)
 
       matched_comment_ids = get_matched_comment_ids(myChannelComments, rules)
-      matched_comments = Comment.objects.filter(id__in = matched_comment_ids)   
-      return matched_comments        
+      matched_comments = Comment.objects.filter(id__in = matched_comment_ids)
+      return matched_comments
 
 class AllCommentsViewSet(viewsets.ModelViewSet):
     queryset = Comment.objects.all().order_by('pub_date')
-    serializer_class = CommentSerializer
+    serializer_class = AllCommentsSerializer
 
     def get_queryset(self):
       queryset = self.queryset
       myChannel = getChannel(self.request)
       myChannelComments = queryset.filter(video__channel = myChannel)
-
-      rules = Rule.objects.filter(rule_collection__owner = myChannel)
-
-      matched_comment_ids = get_matched_comment_ids(myChannelComments, rules)
-      matched_comments = Comment.objects.filter(id__in = matched_comment_ids)   
-      return matched_comments                   
+      return myChannelComments
 
 def makeDebugChannel(channel_id = ''):
   try:
@@ -100,15 +67,6 @@ def makeDebugChannel(channel_id = ''):
       channel_id=channel_id,
       description='This is a temporary debugging channel',
       pub_date=datetime.now())
-
-def getChannel(request):
-  if 'credentials' in request.session and 'myChannelId' in request.session['credentials']:
-    myChannelId = request.session['credentials']['myChannelId']
-    myChannel = Channel.objects.get(channel_id = myChannelId)
-    return myChannel
-  else:
-    #return makeDebugChannel()
-    raise Exception('Could not get login credentials')
 
 def isLoggedIn(request):
   return True #request.user.is_authenticated
@@ -152,7 +110,6 @@ def debug(request):
     request.session['credentials']['myChannelId'] = channel.channel_id
   return HttpResponse('Done.'.encode('utf-8'))
 
-
 @csrf_exempt
 def api(request):
   if request.method == 'GET':
@@ -195,20 +152,21 @@ def overviewChart(request):
     matched_comments_ids = set()
     all_matched_comments = []
     for rule in rules:
-      for c in getMatchedComments(unifiedRule(rule), myChannel):
+      for c in getMatchedCommentsForCharts(unifiedRule(rule), myChannel):
         if (c['id'] not in matched_comments_ids):
           all_matched_comments.append(c)
           matched_comments_ids.add(c['id'])
     collectionDict = {
           'label': collection.name,
           'borderColor': myColors[colorCounter],
+          'backgroundColor': myColors[colorCounter],
           'data': ruleDateCounter(all_matched_comments),
           'fill': False,
           'lineTension': 0,
-        }  
-    myData.append(collectionDict)      
+        }
+    myData.append(collectionDict)
     colorCounter += 1
-    
+
 
   chartConfig = {}
   chartConfig['type'] = 'line'
@@ -216,7 +174,7 @@ def overviewChart(request):
   chartConfig['label'] = 'Number of Comments Caught'
   myColors = getColors(len(myData))
   chartConfig['bgColor'] = myColors
-  chartConfig['borderColor'] = myColors    
+  chartConfig['borderColor'] = myColors
 
   return HttpResponse(json.dumps(chartConfig), content_type='application/json')
 
@@ -237,10 +195,11 @@ def filterChart(request, filter_id):
     ruleDict = {
       'label': rule.phrase,
       'borderColor': myColors[ruleCounter],
+      'backgroundColor': myColors[ruleCounter],
       'fill': False,
       'lineTension': 0,
     }
-    rule_matched_comments = getMatchedComments(unifiedRule(rule), myChannel)
+    rule_matched_comments = getMatchedCommentsForCharts(unifiedRule(rule), myChannel)
     ruleDict['data'] = ruleDateCounter(rule_matched_comments)
     myData.append(ruleDict)
     ruleCounter += 1
@@ -269,8 +228,14 @@ def previewRule(request):
   payload = json.loads(request.body.decode('utf-8'))
   # context is the filter group id
   context, rule = payload['id'], payload['rule']
+  matched_comments = getMatchedCommentsAndPrettify(unifiedRule(rule), myChannel)
+  num_new_matches = 0
+  for comment in matched_comments:
+    if (comment['catching_collection'] is None):
+      num_new_matches += 1
   response = {
-    'comments': getMatchedCommentsAndPrettify(unifiedRule(rule), myChannel)
+    'comments': matched_comments,
+    'num_new_matches': num_new_matches,
   }
   return HttpResponse(json.dumps(response), content_type='application/json')
 
@@ -294,7 +259,7 @@ def previewFilter(request, filter_id):
     for rule in rules:
       matched_comments += getMatchedCommentsAndPrettify(unifiedRule(rule), myChannel)
     response = {
-      'comments': matched_comments
+      'comments': matched_comments,
     }
     return HttpResponse(json.dumps(response), content_type='application/json')
   return HttpResponse('Filter not found'.encode('utf-8'), status = 404)
@@ -336,32 +301,35 @@ def createFilter(request):
     collection = RuleCollection.objects.create(
       name = name,
       create_date = datetime.now(),
-      owner = myChannel,
-      is_template = False)
+      owner = myChannel)
   elif reference.startswith('existing:'):
     collection = RuleCollection.objects.create(
       name = name,
       create_date = datetime.now(),
-      owner = myChannel,
-      is_template = False)
+      owner = myChannel)
     referenceCollection = RuleCollection.objects.get(id = reference[9:])
     for rule in Rule.objects.filter(rule_collection = referenceCollection):
       newRule = Rule.objects.create(
         phrase = rule.phrase,
         exception_phrase = rule.exception_phrase,
-        rule_collection = collection)
+        rule_collection = collection,
+        case_sensitive = rule.case_sensitive,
+        spell_variants = rule.spell_variants,
+        )
   elif reference.startswith('template:'):
     collection = RuleCollection.objects.create(
       name = name,
       create_date = datetime.now(),
-      owner = myChannel,
-      is_template = False)
-    referenceCollection = RuleCollection.objects.get(id = reference[9:])
+      owner = myChannel)
+    referenceCollection = RuleColTemplate.objects.get(id = reference[9:])
     for rule in Rule.objects.filter(rule_collection = referenceCollection):
       newRule = Rule.objects.create(
         phrase = rule.phrase,
         exception_phrase = rule.exception_phrase,
-        rule_collection = collection)    
+        rule_collection = collection,
+        case_sensitive = rule.case_sensitive,
+        spell_variants = rule.spell_variants,
+        )
   else:
     return HttpResponse('Unrecognized reference'.encode('utf-8'), status = 400)
 
@@ -373,9 +341,9 @@ def createFilter(request):
 
 @csrf_exempt
 def updateRule(request):
-  myChannel = getChannel(request)  
+  myChannel = getChannel(request)
   request_data = json.loads(request.body.decode('utf-8'))
-  rule = Rule.objects.get(id=request_data['id'])  
+  rule = Rule.objects.get(id=int(request_data['id']))
 
   updateAction = request_data['updateAction']
 
@@ -386,9 +354,9 @@ def updateRule(request):
       rule.case_sensitive = True
     rule.save()
     return HttpResponse(json.dumps({
-      'id': rule.id,
+      'id': str(rule.id),
       'case_sensitive': rule.case_sensitive,
-    }), content_type='application/json')    
+    }), content_type='application/json')
   elif (updateAction == 'toggle_spell_variants'):
     if (rule.spell_variants == True):
       rule.spell_variants = False
@@ -396,11 +364,11 @@ def updateRule(request):
       rule.spell_variants = True
     rule.save()
     return HttpResponse(json.dumps({
-      'id': rule.id,
+      'id': str(rule.id),
       'spell_variants': rule.spell_variants,
-    }), content_type='application/json')        
+    }), content_type='application/json')
   else:
-    return HttpResponse('Unsupported action'.encode('utf-8'), status = 400)    
+    return HttpResponse('Unsupported action'.encode('utf-8'), status = 400)
 
 @csrf_exempt
 def updateFilter(request):
@@ -422,12 +390,12 @@ def updateFilter(request):
       phrase = phrase,
       rule_collection = collection,
     )
-    return HttpResponse(json.dumps({
-      'id': rule.id
-    }), content_type='application/json')
+    return HttpResponse(json.dumps(
+      serializeRule(rule)
+    ), content_type='application/json')
   elif (updateAction == 'rules:remove'):
     if 'id' in updateValue:
-      id = updateValue['id']
+      id = int(updateValue['id'])
       rules = Rule.objects.filter(id = id)
     else:
       return HttpResponse('Rule id not supplied'.encode('utf-8'), status = 400)

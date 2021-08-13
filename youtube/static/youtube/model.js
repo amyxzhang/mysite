@@ -19,9 +19,13 @@
     this._phrase = (typeof def === 'undefined') ?
       '' : def['phrase'];
     this._case_sensitive = (typeof def === 'undefined') ?
-      '' : def['case_sensitive'];      
+      '' : def['case_sensitive'];
     this._spell_variants = (typeof def === 'undefined') ?
-      '' : def['spell_variants'];            
+      '' : def['spell_variants'];
+    this._phrase_regex = (typeof def === 'undefined') ?
+      '' : def['phrase_regex'];
+    this._num_matched_comments = (typeof def === 'undefined') ?
+      0 : def['num_matched_comments'];
   }
 
   WordFilter.prototype.isFinalized = function () {
@@ -33,12 +37,14 @@
       return Promise.reject(new Error(
         'Cannot finalize an already finalized rule'));
     } else {
-      console.log(this._parent);
       return this._api.updateFilter(
         this._parent.getId(),
         'rules:add',
-        this.serialize()).execute().then((function (id) {
-          this._id = id.id;
+        this.serialize()).execute().then((function (rule) {
+          this._id = rule.id;
+          this._case_sensitive = rule.case_sensitive;
+          this._spell_variants = rule.spell_variants;
+          this._num_matched_comments = rule.num_matched_comments;
         }).bind(this));
     }
   };
@@ -77,12 +83,12 @@
           this._case_sensitive = serialized.case_sensitive;
           return this._case_sensitive;
         }).bind(this));
-    }    
+    }
   }
 
   WordFilter.prototype.getSpellVariants = function () {
     return this._spell_variants;
-  }  
+  }
 
   WordFilter.prototype.setSpellVariants = function () {
     if (!this.isFinalized()) {
@@ -97,8 +103,16 @@
           this._spell_variants = serialized.spell_variants;
           return this._spell_variants;
         }).bind(this));
-    }    
-  }  
+    }
+  }
+
+  WordFilter.prototype.getPhraseRegex = function () {
+    return this._phrase_regex;
+  }
+
+  WordFilter.prototype.getNumMatchedComments = function () {
+    return this._num_matched_comments;
+  }
 
   WordFilter.prototype.getId = function () {
     return this._id;
@@ -125,7 +139,11 @@
   WordFilter.prototype.serialize = function () {
     return {
       'id': this._id,
-      'phrase': this._phrase
+      'phrase': this._phrase,
+      'case_sensitive': this._case_sensitive,
+      'spell_variants': this._spell_variants,
+      'phrase_regex': this._phrase_regex,
+      'num_matched_comments': this._num_matched_comments,
     };
   };
 
@@ -274,6 +292,9 @@
       this._setGroups(data.filters.map((function (def) {
         return new WordFilterGroup(this, this._api, def);
       }).bind(this)));
+      if (this._currentNew === null) {
+        this._reshiftNewGroup();
+      }
     }).bind(this));
   }
 
